@@ -3,6 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const ytdl = require('@distube/ytdl-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,7 +33,7 @@ function loadSongs() {
     const initialSongs = [
       {
         id: 'sample-1',
-        title: 'Cyberpunk Synthwave Demo',
+        title: 'Synthwave Chillout',
         artist: 'Antigravity Audio',
         album: 'Chill Vibes Vol. 1',
         duration: 124,
@@ -78,7 +79,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB max per song
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max per song
 });
 
 // API Routes
@@ -131,6 +132,77 @@ app.get('/api/stream/:id', (req, res) => {
     };
     res.writeHead(200, head);
     fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+// YouTube Import Endpoint
+app.post('/api/youtube-import', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'YouTube URL ist erforderlich' });
+    }
+
+    const cleanUrl = url.trim();
+    if (!ytdl.validateURL(cleanUrl)) {
+      return res.status(400).json({ error: 'Ungültige YouTube URL (z.B. https://youtu.be/...)' });
+    }
+
+    console.log(`[YouTube Import] Fetching info for ${cleanUrl}...`);
+    const info = await ytdl.getInfo(cleanUrl);
+
+    const title = info.videoDetails.title || 'YouTube Audio';
+    const artist = info.videoDetails.author?.name || info.videoDetails.ownerChannelName || 'YouTube Artist';
+    const duration = parseInt(info.videoDetails.lengthSeconds) || 0;
+    const thumbnails = info.videoDetails.thumbnails || [];
+    const coverUrl = thumbnails.length > 0 ? thumbnails[thumbnails.length - 1].url : '/uploads/covers/default.jpg';
+
+    const songId = 'yt-' + Date.now();
+    const fileName = `${songId}.mp3`;
+    const audioFilePath = path.join(AUDIO_DIR, fileName);
+
+    console.log(`[YouTube Import] Downloading audio to ${fileName}...`);
+    const stream = ytdl(cleanUrl, {
+      quality: 'highestaudio',
+      filter: 'audioonly'
+    });
+
+    const fileStream = fs.createWriteStream(audioFilePath);
+    stream.pipe(fileStream);
+
+    fileStream.on('finish', () => {
+      console.log(`[YouTube Import] Finished saving ${fileName}`);
+      const songs = loadSongs();
+      const newSong = {
+        id: songId,
+        title: title,
+        artist: artist,
+        album: 'YouTube Import',
+        duration: duration,
+        fileName: fileName,
+        coverUrl: coverUrl,
+        audioUrl: `/api/stream/${songId}`,
+        addedAt: new Date().toISOString()
+      };
+
+      songs.unshift(newSong);
+      saveSongs(songs);
+      res.status(201).json(newSong);
+    });
+
+    fileStream.on('error', (err) => {
+      console.error('[YouTube Import] File stream error:', err);
+      res.status(500).json({ error: 'Fehler beim Speichern der Audio-Datei' });
+    });
+
+    stream.on('error', (err) => {
+      console.error('[YouTube Import] YTDL Stream error:', err);
+      res.status(500).json({ error: 'YouTube Stream konnte nicht geladen werden: ' + err.message });
+    });
+
+  } catch (err) {
+    console.error('[YouTube Import] Exception:', err);
+    res.status(500).json({ error: 'YouTube Import fehlgeschlagen: ' + err.message });
   }
 });
 

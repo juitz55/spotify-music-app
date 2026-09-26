@@ -1,13 +1,14 @@
 {
   "name": "music-app",
   "version": "1.0.0",
-  "description": "24/7 Spotify-Style Offline Music Player PWA",
+  "description": "24/7 Spotify-Style Offline Music Player PWA with YouTube Audio Downloader",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.15.9",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1"

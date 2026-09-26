@@ -37,7 +37,7 @@
 
       <div class="sidebar-actions">
         <button class="btn btn-primary btn-full" id="open-upload-btn">
-          <i class="fa-solid fa-plus"></i> Song Hochladen
+          <i class="fa-solid fa-plus"></i> MP3 Hochladen
         </button>
       </div>
 
@@ -67,12 +67,25 @@
         </div>
       </header>
 
-      <!-- Main Section Header Banner -->
+      <!-- Hero Banner with YouTube Downloader -->
       <section class="hero-banner">
         <div class="hero-content">
-          <span class="hero-tag"><i class="fa-solid fa-bolt"></i> 24/7 ONLINE & OFFLINE APPS</span>
-          <h1 class="hero-title">Deine Musik. Überall offline hören.</h1>
-          <p class="hero-desc">Lade deine Lieblingssongs herunter – sie bleiben direkt in deiner App gespeichert, selbst im Flugmodus!</p>
+          <span class="hero-tag"><i class="fa-brands fa-youtube" style="color: #ff0000;"></i> YOUTUBE LINK AUTOMATISCH SPEICHERN</span>
+          <h1 class="hero-title">Füge einen YouTube-Link ein</h1>
+          <p class="hero-desc">Kopiere einfach den Link eines Videos oder Songs von YouTube (z.B. https://youtu.be/...) – die App lädt das Audio automatisch herunter und speichert es für dich!</p>
+
+          <!-- YouTube Import Bar -->
+          <div class="youtube-import-box">
+            <div class="yt-input-wrapper">
+              <i class="fa-brands fa-youtube yt-icon"></i>
+              <input type="text" id="yt-url-input" placeholder="YouTube URL hier einfügen (z.B. https://youtu.be/-J2rSm8K9_Y)">
+            </div>
+            <button class="btn btn-primary" id="yt-import-btn">
+              <i class="fa-solid fa-cloud-arrow-down"></i> Herunterladen & Speichern
+            </button>
+          </div>
+          <div id="yt-status-message" class="yt-status"></div>
+
           <div class="hero-stats">
             <div class="stat-item">
               <span class="stat-num" id="stat-total-songs">0</span>
@@ -89,7 +102,7 @@
       <!-- Track List Section -->
       <section class="track-section">
         <div class="section-header">
-          <h2 id="section-title">Alle Songs</h2>
+          <h2 id="section-title">Meine Musikbibliothek</h2>
           <span class="track-count" id="track-count-text">0 Titel</span>
         </div>
 
@@ -154,7 +167,7 @@
     <div class="modal-overlay" id="upload-modal">
       <div class="modal-card">
         <div class="modal-header">
-          <h3><i class="fa-solid fa-cloud-arrow-up"></i> Song hochladen</h3>
+          <h3><i class="fa-solid fa-cloud-arrow-up"></i> MP3 Datei hochladen</h3>
           <button class="close-btn" id="close-upload-modal">&times;</button>
         </div>
         

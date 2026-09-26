@@ -50,6 +50,10 @@ const statTotalSongs = document.getElementById('stat-total-songs');
 const statOfflineSongs = document.getElementById('stat-offline-songs');
 const offlineCountBadge = document.getElementById('offline-count-badge');
 
+const ytUrlInput = document.getElementById('yt-url-input');
+const ytImportBtn = document.getElementById('yt-import-btn');
+const ytStatusMessage = document.getElementById('yt-status-message');
+
 // --- 1. Service Worker & Offline Initialization ---
 async function initServiceWorker() {
   if ('serviceWorker' in navigator) {
@@ -125,7 +129,62 @@ function updateNetworkStatus(isOnline) {
 window.addEventListener('online', () => fetchSongs());
 window.addEventListener('offline', () => updateNetworkStatus(false));
 
-// --- 3. Offline Download Manager ---
+// --- 3. YouTube URL Importer ---
+if (ytImportBtn) {
+  ytImportBtn.addEventListener('click', handleYouTubeImport);
+  ytUrlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleYouTubeImport();
+  });
+}
+
+async function handleYouTubeImport() {
+  const url = ytUrlInput.value.trim();
+  if (!url) {
+    showYtStatus('Bitte gib einen gültigen YouTube Link ein.', 'error');
+    return;
+  }
+
+  ytImportBtn.disabled = true;
+  ytImportBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lade herunter...';
+  showYtStatus('<i class="fa-solid fa-spinner fa-spin"></i> YouTube Video wird heruntergeladen & konvertiert... (dauert ca. 10–20 Sek.)', 'info');
+
+  try {
+    const res = await fetch('/api/youtube-import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.id) {
+      songs.unshift(data);
+      localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
+      renderTrackList();
+      updateStats();
+      ytUrlInput.value = '';
+      showYtStatus(`✓ "${data.title}" erfolgreich gespeichert!`, 'success');
+
+      // Auto play newly imported track
+      playSong(0);
+    } else {
+      showYtStatus(`Fehler: ${data.error || 'Import fehlgeschlagen'}`, 'error');
+    }
+  } catch (err) {
+    console.error('YouTube import error:', err);
+    showYtStatus('Netzwerkfehler beim YouTube Import.', 'error');
+  } finally {
+    ytImportBtn.disabled = false;
+    ytImportBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down"></i> Herunterladen & Speichern';
+  }
+}
+
+function showYtStatus(msg, type) {
+  ytStatusMessage.className = `yt-status ${type}`;
+  ytStatusMessage.innerHTML = msg;
+}
+
+// --- 4. Offline Download Manager ---
 async function toggleDownloadSong(songId, event) {
   if (event) event.stopPropagation();
 
@@ -181,7 +240,7 @@ function updateStats() {
   offlineCountBadge.textContent = downloadedSongIds.size;
 }
 
-// --- 4. Render Track List ---
+// --- 5. Render Track List ---
 function renderTrackList() {
   const filtered = songs.filter(song => {
     const matchesSearch = song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -197,7 +256,7 @@ function renderTrackList() {
     trackListContainer.innerHTML = `
       <div style="padding: 40px; text-align: center; color: var(--text-subdued);">
         <i class="fa-solid fa-music" style="font-size: 32px; margin-bottom: 12px; display: block;"></i>
-        Keine Songs gefunden. Lade erstelle oder lade neue Titel hoch!
+        Keine Songs gefunden. Füge einen YouTube-Link ein oder lade neue Dateien hoch!
       </div>
     `;
     return;
@@ -231,7 +290,7 @@ function renderTrackList() {
   }).join('');
 }
 
-// --- 5. Audio Player Engine & Controls ---
+// --- 6. Audio Player Engine & Controls ---
 function playSongById(songId) {
   const index = songs.findIndex(s => s.id === songId);
   if (index !== -1) {

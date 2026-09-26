@@ -279,10 +279,10 @@ body {
   color: var(--text-subdued);
 }
 
-/* Hero Banner */
+/* Hero Banner & YouTube Downloader Box */
 .hero-banner {
   background: linear-gradient(135deg, #1db95433 0%, #121212 100%);
-  border: 1px solid #1db95422;
+  border: 1px solid #1db95433;
   border-radius: var(--radius-lg);
   padding: 32px;
   margin-bottom: 32px;
@@ -296,7 +296,7 @@ body {
 }
 
 .hero-title {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 800;
   margin: 8px 0;
 }
@@ -304,8 +304,64 @@ body {
 .hero-desc {
   color: var(--text-subdued);
   font-size: 14px;
-  max-width: 600px;
+  max-width: 650px;
   margin-bottom: 20px;
+}
+
+.youtube-import-box {
+  display: flex;
+  gap: 12px;
+  max-width: 680px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.yt-input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.yt-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: #ff0000;
+}
+
+.yt-input-wrapper input {
+  width: 100%;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 12px 16px 12px 42px;
+  color: var(--text-base);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.yt-input-wrapper input:focus {
+  border-color: #ff0000;
+  background-color: var(--bg-highlight);
+}
+
+.yt-status {
+  font-size: 13px;
+  margin-bottom: 16px;
+  min-height: 20px;
+  color: var(--text-subdued);
+}
+
+.yt-status.success {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.yt-status.error {
+  color: #e74c3c;
+  font-weight: 600;
 }
 
 .hero-stats {
@@ -705,6 +761,11 @@ body {
 
   .search-box {
     width: 100%;
+  }
+
+  .youtube-import-box {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .player-bar {
