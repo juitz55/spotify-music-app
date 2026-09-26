@@ -88,46 +88,127 @@ function extractVideoId(url) {
   return match ? match[1] : null;
 }
 
-// Helper: Fetch YouTube Stream via Piped / Invidious API (Bypasses YouTube Bot Checks 100%)
-async function fetchYouTubeViaAPI(videoId) {
-  const instances = [
-    `https://api.piped.privacydev.net/streams/${videoId}`,
-    `https://pipedapi.kavin.rocks/streams/${videoId}`,
-    `https://pipedapi.tokhmi.xyz/streams/${videoId}`,
-    `https://pipedapi.palvelintila.fi/streams/${videoId}`
-  ];
+// Multi-Layer YouTube Downloader (Cobalt + Invidious + Piped + oEmbed)
+async function fetchYouTubeViaAPI(url, videoId) {
+  // Layer 1: Cobalt API
+  try {
+    console.log(`[YouTube API] Trying Cobalt API for videoId ${videoId}...`);
+    const cobaltRes = await fetch('https://api.cobalt.tools/', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0'
+      },
+      body: JSON.stringify({
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        downloadMode: 'audio',
+        audioFormat: 'mp3'
+      })
+    });
 
-  for (const apiUrl of instances) {
-    try {
-      console.log(`[YouTube API] Requesting ${apiUrl}...`);
-      const response = await fetch(apiUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
+    if (cobaltRes.ok) {
+      const data = await cobaltRes.json();
+      if (data && data.url) {
+        let title = 'YouTube Audio';
+        let author = 'YouTube Artist';
+        const cover = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
-      if (!response.ok) continue;
+        try {
+          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+          if (oembedRes.ok) {
+            const oembed = await oembedRes.json();
+            title = oembed.title || title;
+            author = oembed.author_name || author;
+          }
+        } catch (e) {}
 
-      const data = await response.json();
-      if (data && data.audioStreams && data.audioStreams.length > 0) {
-        // Pick best quality audio stream
-        const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+        console.log(`[YouTube API] Cobalt succeeded for "${title}"`);
         return {
-          title: data.title || 'YouTube Song',
-          artist: data.uploader || 'YouTube Artist',
-          duration: parseInt(data.duration) || 0,
-          coverUrl: data.thumbnailUrl || '/uploads/covers/default.jpg',
-          streamUrl: bestAudio.url
+          title,
+          artist: author,
+          duration: 0,
+          coverUrl: cover,
+          streamUrl: data.url
         };
       }
-    } catch (err) {
-      console.warn(`[YouTube API] Instance ${apiUrl} failed:`, err.message);
+    }
+  } catch (err) {
+    console.warn('[YouTube API] Cobalt API error:', err.message);
+  }
+
+  // Layer 2: Invidious API
+  const invidiousInstances = [
+    `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+    `https://inv.tux.pizza/api/v1/videos/${videoId}`,
+    `https://invidious.drgns.space/api/v1/videos/${videoId}`,
+    `https://vid.puffyan.us/api/v1/videos/${videoId}`
+  ];
+
+  for (const invUrl of invidiousInstances) {
+    try {
+      console.log(`[YouTube API] Trying Invidious API ${invUrl}...`);
+      const invRes = await fetch(invUrl);
+      if (invRes.ok) {
+        const data = await invRes.json();
+        if (data && data.adaptiveFormats) {
+          const audio = data.adaptiveFormats.find(f => f.type && f.type.includes('audio/'));
+          if (audio && audio.url) {
+            console.log(`[YouTube API] Invidious succeeded for "${data.title}"`);
+            return {
+              title: data.title || 'YouTube Audio',
+              artist: data.author || 'YouTube Artist',
+              duration: parseInt(data.lengthSeconds) || 0,
+              coverUrl: (data.videoThumbnails && data.videoThumbnails.length > 0) ? data.videoThumbnails[0].url : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+              streamUrl: audio.url
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[YouTube API] Invidious ${invUrl} failed:`, e.message);
     }
   }
+
+  // Layer 3: Piped API
+  const pipedInstances = [
+    `https://pipedapi.kavin.rocks/streams/${videoId}`,
+    `https://api.piped.privacydev.net/streams/${videoId}`,
+    `https://pipedapi.palvelintila.fi/streams/${videoId}`,
+    `https://pipedapi.adminforge.de/streams/${videoId}`
+  ];
+
+  for (const pipedUrl of pipedInstances) {
+    try {
+      console.log(`[YouTube API] Trying Piped API ${pipedUrl}...`);
+      const pipedRes = await fetch(pipedUrl);
+      if (pipedRes.ok) {
+        const data = await pipedRes.json();
+        if (data && data.audioStreams && data.audioStreams.length > 0) {
+          const best = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+          console.log(`[YouTube API] Piped succeeded for "${data.title}"`);
+          return {
+            title: data.title || 'YouTube Audio',
+            artist: data.uploader || 'YouTube Artist',
+            duration: parseInt(data.duration) || 0,
+            coverUrl: data.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            streamUrl: best.url
+          };
+        }
+      }
+    } catch (e) {
+      console.warn(`[YouTube API] Piped ${pipedUrl} failed:`, e.message);
+    }
+  }
+
   return null;
 }
 
 // Helper: Download Remote Stream URL to local file
 async function downloadFile(streamUrl, targetPath) {
-  const response = await fetch(streamUrl);
+  const response = await fetch(streamUrl, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+  });
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
@@ -187,7 +268,7 @@ app.get('/api/stream/:id', (req, res) => {
   }
 });
 
-// YouTube Import Endpoint (Bulletproof Bot-Bypassing Engine)
+// YouTube Import Endpoint
 app.post('/api/youtube-import', async (req, res) => {
   try {
     const { url } = req.body;
@@ -199,11 +280,11 @@ app.post('/api/youtube-import', async (req, res) => {
     const videoId = extractVideoId(cleanUrl);
 
     if (!videoId) {
-      return res.status(400).json({ error: 'Ungültiges YouTube URL Format. (z.B. https://youtu.be/...)' });
+      return res.status(400).json({ error: 'Ungültiges YouTube URL Format (z.B. https://youtu.be/...)' });
     }
 
     console.log(`[YouTube Import] Extracting videoId ${videoId}...`);
-    const ytData = await fetchYouTubeViaAPI(videoId);
+    const ytData = await fetchYouTubeViaAPI(cleanUrl, videoId);
 
     if (!ytData || !ytData.streamUrl) {
       return res.status(500).json({ error: 'Der YouTube-Link konnte nicht verarbeitet werden. Überprüfe die URL.' });
