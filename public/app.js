@@ -16,264 +16,136 @@ const audioEngine = document.getElementById('audio-engine');
 const trackListContainer = document.getElementById('track-list-container');
 const searchInput = document.getElementById('search-input');
 const filterOfflineBtn = document.getElementById('filter-offline-only');
-
 const btnPlayPause = document.getElementById('btn-play-pause');
 const btnPrev = document.getElementById('btn-prev');
 const btnNext = document.getElementById('btn-next');
 const btnShuffle = document.getElementById('btn-shuffle');
 const btnRepeat = document.getElementById('btn-repeat');
-
 const playerCover = document.getElementById('player-cover');
 const playerTitle = document.getElementById('player-title');
 const playerArtist = document.getElementById('player-artist');
 const playerDownloadBtn = document.getElementById('player-download-btn');
 const playerOfflineBadge = document.getElementById('player-offline-badge');
-
 const timeCurrent = document.getElementById('time-current');
 const timeTotal = document.getElementById('time-total');
 const seekBar = document.getElementById('seek-bar');
 const seekFill = document.getElementById('seek-fill');
-
 const volumeSlider = document.getElementById('volume-slider');
 const volumeIcon = document.getElementById('volume-icon');
-
 const uploadModal = document.getElementById('upload-modal');
 const openUploadBtn = document.getElementById('open-upload-btn');
 const closeUploadBtn = document.getElementById('close-upload-modal');
 const cancelUploadBtn = document.getElementById('cancel-upload-btn');
 const uploadForm = document.getElementById('upload-form');
-
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
-
 const statTotalSongs = document.getElementById('stat-total-songs');
 const statOfflineSongs = document.getElementById('stat-offline-songs');
 const offlineCountBadge = document.getElementById('offline-count-badge');
-
 const ytUrlInput = document.getElementById('yt-url-input');
 const ytImportBtn = document.getElementById('yt-import-btn');
 const ytStatusMessage = document.getElementById('yt-status-message');
 
-// --- 1. Service Worker & Offline Initialization ---
+// --- Service Worker ---
 async function initServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('/sw.js');
-      console.log('[App] Service Worker registered with scope:', reg.scope);
+      await navigator.serviceWorker.register('/sw.js');
     } catch (err) {
-      console.error('[App] Service Worker registration failed:', err);
+      console.error('SW registration failed:', err);
     }
   }
 }
 
 async function loadDownloadedCache() {
   try {
-    const storedOfflineMetadata = localStorage.getItem(LOCAL_SONGS_KEY);
-    if (storedOfflineMetadata) {
-      const offlineArray = JSON.parse(storedOfflineMetadata);
-      offlineArray.forEach(s => downloadedSongIds.add(s.id));
-    }
-
+    const stored = localStorage.getItem(LOCAL_SONGS_KEY);
+    if (stored) JSON.parse(stored).forEach(s => downloadedSongIds.add(s.id));
     if ('caches' in window) {
       const cache = await caches.open(AUDIO_CACHE_NAME);
       const keys = await cache.keys();
       keys.forEach(req => {
         const match = req.url.match(/\/api\/stream\/([^\/]+)/);
-        if (match && match[1]) {
-          downloadedSongIds.add(match[1]);
-        }
+        if (match) downloadedSongIds.add(match[1]);
       });
     }
     updateStats();
   } catch (err) {
-    console.error('Error loading downloaded cache:', err);
+    console.error('Cache load error:', err);
   }
 }
 
-// --- 2. Data Fetching & Sync ---
+// --- Fetch Songs ---
 async function fetchSongs() {
   try {
     const res = await fetch('/api/songs');
-    if (!res.ok) throw new Error('Network response failed');
-    const data = await res.json();
-    songs = data;
-
-    // Save metadata locally for offline access
+    if (!res.ok) throw new Error('Network error');
+    songs = await res.json();
     localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
     updateNetworkStatus(true);
-  } catch (err) {
-    console.warn('[App] Fetch failed, loading from local offline storage:', err);
+  } catch {
     updateNetworkStatus(false);
-    const cachedMetadata = localStorage.getItem(LOCAL_SONGS_KEY);
-    if (cachedMetadata) {
-      songs = JSON.parse(cachedMetadata);
-    } else {
-      songs = [];
-    }
+    const cached = localStorage.getItem(LOCAL_SONGS_KEY);
+    songs = cached ? JSON.parse(cached) : [];
   }
-
   renderTrackList();
   updateStats();
 }
 
-function updateNetworkStatus(isOnline) {
-  if (isOnline) {
-    statusDot.className = 'status-indicator online';
-    statusText.textContent = 'Online (24/7 Backend)';
-  } else {
-    statusDot.className = 'status-indicator offline';
-    statusText.textContent = 'Offline (Lokaler Modus)';
-  }
+function updateNetworkStatus(online) {
+  statusDot.className = `status-indicator ${online ? 'online' : 'offline'}`;
+  statusText.textContent = online ? 'Online (24/7 Backend)' : 'Offline (Lokaler Modus)';
 }
 
-window.addEventListener('online', () => fetchSongs());
+window.addEventListener('online', fetchSongs);
 window.addEventListener('offline', () => updateNetworkStatus(false));
 
-// --- 3. Ultra-Smart YouTube Video ID Matcher ---
-function extractVideoId(inputStr) {
-  if (!inputStr) return null;
-  const str = inputStr.trim();
-  
-  // Exact 11 char ID
-  if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
-
-  // Match youtube.com, youtu.be, tu.be, etc.
-  const beMatch = str.match(/be\/([a-zA-Z0-9_-]{11})/);
-  if (beMatch && beMatch[1]) return beMatch[1];
-
-  const vMatch = str.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-  if (vMatch && vMatch[1]) return vMatch[1];
-
-  const embedMatch = str.match(/(?:embed|v)\/([a-zA-Z0-9_-]{11})/);
-  if (embedMatch && embedMatch[1]) return embedMatch[1];
-
-  const generic = str.match(/([a-zA-Z0-9_-]{11})/);
-  return generic ? generic[1] : null;
+// --- YouTube Import (Server-only, clean & simple) ---
+function extractVideoId(input) {
+  if (!input) return null;
+  const s = input.trim();
+  // Standard patterns
+  let m = s.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|watch\?.*v=))([\w-]{11})/);
+  if (m) return m[1];
+  // Shortened like tu.be/XXXX
+  m = s.match(/be\/([\w-]{11})/);
+  if (m) return m[1];
+  // Just the 11-char ID
+  m = s.match(/^([\w-]{11})$/);
+  if (m) return m[1];
+  // Anything with 11 char sequence
+  m = s.match(/([\w-]{11})/);
+  return m ? m[1] : null;
 }
 
 if (ytImportBtn) {
   ytImportBtn.addEventListener('click', handleYouTubeImport);
-  ytUrlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handleYouTubeImport();
-  });
+  ytUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleYouTubeImport(); });
 }
 
 async function handleYouTubeImport() {
-  const rawUrl = ytUrlInput.value.trim();
-  const videoId = extractVideoId(rawUrl);
+  const raw = ytUrlInput.value.trim();
+  const videoId = extractVideoId(raw);
 
   if (!videoId) {
-    showYtStatus('Bitte gib einen gültigen YouTube Link oder Video-ID ein.', 'error');
+    showYtStatus('Ungültiger YouTube Link. Bitte vollständigen Link einfügen.', 'error');
     return;
   }
 
-  const cleanFullUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
   ytImportBtn.disabled = true;
-  ytImportBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verarbeite...';
-  showYtStatus(`<i class="fa-solid fa-spinner fa-spin"></i> Video "${videoId}" wird konvertiert & heruntergeladen... (dauert ca. 10 Sek.)`, 'info');
+  ytImportBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lade herunter...';
+  showYtStatus(`<i class="fa-solid fa-spinner fa-spin"></i> Lädt YouTube Audio herunter... (kann bis zu 30 Sek. dauern)`, 'info');
 
   try {
-    // Step A: Fetch oEmbed Metadata (Title, Artist, Cover)
-    let title = 'YouTube Track';
-    let artist = 'YouTube Artist';
-    const coverUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-    try {
-      const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(cleanFullUrl)}&format=json`);
-      if (oembedRes.ok) {
-        const oembed = await oembedRes.json();
-        title = oembed.title || title;
-        artist = oembed.author_name || artist;
-      }
-    } catch (e) {
-      console.warn('oEmbed fetch error:', e);
-    }
-
-    // Step B: Try multi-source client audio extraction
-    let audioBlob = null;
-
-    // Source 1: Cobalt API
-    try {
-      console.log('[YouTube Client] Fetching Cobalt API...');
-      const cobRes = await fetch('https://api.cobalt.tools/', {
-        method: 'POST',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: cleanFullUrl, downloadMode: 'audio', audioFormat: 'mp3' })
-      });
-      if (cobRes.ok) {
-        const cobData = await cobRes.json();
-        if (cobData && cobData.url) {
-          const aRes = await fetch(cobData.url);
-          if (aRes.ok) audioBlob = await aRes.blob();
-        }
-      }
-    } catch (e) { console.warn('[YouTube Client] Cobalt failed:', e); }
-
-    // Source 2: Piped API Fallback
-    if (!audioBlob) {
-      const pipedApis = [
-        `https://api.piped.privacydev.net/streams/${videoId}`,
-        `https://pipedapi.kavin.rocks/streams/${videoId}`,
-        `https://pipedapi.palvelintila.fi/streams/${videoId}`
-      ];
-      for (const pUrl of pipedApis) {
-        try {
-          console.log(`[YouTube Client] Trying Piped ${pUrl}...`);
-          const pRes = await fetch(pUrl);
-          if (pRes.ok) {
-            const pData = await pRes.json();
-            if (pData && pData.audioStreams && pData.audioStreams.length > 0) {
-              const best = pData.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-              const aRes = await fetch(best.url);
-              if (aRes.ok) {
-                audioBlob = await aRes.blob();
-                if (pData.title) title = pData.title;
-                if (pData.uploader) artist = pData.uploader;
-                break;
-              }
-            }
-          }
-        } catch (e) { console.warn(`[YouTube Client] Piped ${pUrl} failed:`, e); }
-      }
-    }
-
-    // Step C: Send Audio Blob or URL to backend server
-    if (audioBlob) {
-      const audioFile = new File([audioBlob], `${videoId}.mp3`, { type: 'audio/mpeg' });
-      const formData = new FormData();
-      formData.append('title', title);
-      formData.append('artist', artist);
-      formData.append('album', 'YouTube Import');
-      formData.append('audio', audioFile);
-
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (uploadRes.ok) {
-        const newSong = await uploadRes.json();
-        songs.unshift(newSong);
-        localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
-        renderTrackList();
-        updateStats();
-        ytUrlInput.value = '';
-        showYtStatus(`✓ "${newSong.title}" erfolgreich gespeichert!`, 'success');
-        playSong(0);
-        return;
-      }
-    }
-
-    // Fallback: Try backend server endpoint directly
-    const backendRes = await fetch('/api/youtube-import', {
+    const res = await fetch('/api/youtube-import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: cleanFullUrl })
+      body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}` })
     });
 
-    if (backendRes.ok) {
-      const data = await backendRes.json();
+    const data = await res.json();
+
+    if (res.ok && data.id) {
       songs.unshift(data);
       localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
       renderTrackList();
@@ -281,14 +153,11 @@ async function handleYouTubeImport() {
       ytUrlInput.value = '';
       showYtStatus(`✓ "${data.title}" erfolgreich gespeichert!`, 'success');
       playSong(0);
-      return;
+    } else {
+      showYtStatus(`Fehler: ${data.error || 'Import fehlgeschlagen'}`, 'error');
     }
-
-    throw new Error('Kein Audio-Stream gefunden.');
-
   } catch (err) {
-    console.error('YouTube import error:', err);
-    showYtStatus(`Fehler: ${err.message || 'Import fehlgeschlagen'}. Du kannst auch jederzeit MP3-Dateien direkt hochladen.`, 'error');
+    showYtStatus('Netzwerkfehler. Bitte versuche es erneut.', 'error');
   } finally {
     ytImportBtn.disabled = false;
     ytImportBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down"></i> Herunterladen & Speichern';
@@ -300,51 +169,34 @@ function showYtStatus(msg, type) {
   ytStatusMessage.innerHTML = msg;
 }
 
-// --- 4. Offline Download Manager ---
+// --- Offline Download ---
 async function toggleDownloadSong(songId, event) {
   if (event) event.stopPropagation();
-
   const song = songs.find(s => s.id === songId);
   if (!song) return;
 
   if (downloadedSongIds.has(songId)) {
-    // Delete from offline cache
     try {
       if ('caches' in window) {
         const cache = await caches.open(AUDIO_CACHE_NAME);
         await cache.delete(song.audioUrl);
-        if (song.coverUrl && !song.coverUrl.includes('default.jpg')) {
-          await cache.delete(song.coverUrl);
-        }
       }
       downloadedSongIds.delete(songId);
-      console.log(`[Offline] Song ${song.title} removed from offline cache.`);
-    } catch (err) {
-      console.error('Failed to remove song from cache:', err);
-    }
+    } catch (err) { console.error(err); }
   } else {
-    // Download to offline cache
     try {
       if ('caches' in window) {
         const cache = await caches.open(AUDIO_CACHE_NAME);
-        console.log(`[Offline] Downloading song ${song.title}...`);
         await cache.add(song.audioUrl);
-        if (song.coverUrl && !song.coverUrl.includes('default.jpg')) {
-          await cache.add(song.coverUrl);
-        }
         downloadedSongIds.add(songId);
-        console.log(`[Offline] Song ${song.title} downloaded successfully.`);
       }
     } catch (err) {
-      alert('Fehler beim Herunterladen des Songs. Bist du online?');
-      console.error('Download error:', err);
+      alert('Fehler beim Herunterladen. Bist du online?');
     }
   }
 
-  // Persist offline metadata
   const offlineSongs = songs.filter(s => downloadedSongIds.has(s.id));
   localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(offlineSongs));
-
   renderTrackList();
   updateStats();
   updatePlayerOfflineBadge();
@@ -356,70 +208,59 @@ function updateStats() {
   offlineCountBadge.textContent = downloadedSongIds.size;
 }
 
-// --- 5. Render Track List ---
+// --- Track List ---
 function renderTrackList() {
   const filtered = songs.filter(song => {
-    const matchesSearch = song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          song.album.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesOffline = !filterOfflineOnly || downloadedSongIds.has(song.id);
-    return matchesSearch && matchesOffline;
+    const q = searchQuery.toLowerCase();
+    const matchSearch = song.title.toLowerCase().includes(q) || song.artist.toLowerCase().includes(q) || (song.album || '').toLowerCase().includes(q);
+    return matchSearch && (!filterOfflineOnly || downloadedSongIds.has(song.id));
   });
 
   document.getElementById('track-count-text').textContent = `${filtered.length} Titel`;
 
   if (filtered.length === 0) {
-    trackListContainer.innerHTML = `
-      <div style="padding: 40px; text-align: center; color: var(--text-subdued);">
-        <i class="fa-solid fa-music" style="font-size: 32px; margin-bottom: 12px; display: block;"></i>
-        Keine Songs gefunden. Füge einen YouTube-Link ein oder lade neue Dateien hoch!
-      </div>
-    `;
+    trackListContainer.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-subdued);">
+      <i class="fa-solid fa-music" style="font-size:32px;margin-bottom:12px;display:block;"></i>
+      Keine Songs. Füge einen YouTube-Link ein oder lade eine MP3 hoch!
+    </div>`;
     return;
   }
 
   trackListContainer.innerHTML = filtered.map((song, idx) => {
     const isCurrent = currentSongIndex >= 0 && songs[currentSongIndex]?.id === song.id;
-    const isDownloaded = downloadedSongIds.has(song.id);
-    const durationFormatted = formatTime(song.duration || 0);
-
+    const isDl = downloadedSongIds.has(song.id);
     return `
       <div class="track-row ${isCurrent ? 'playing' : ''}" onclick="playSongById('${song.id}')">
-        <span class="track-num">${isCurrent && isPlaying ? '<i class="fa-solid fa-waveform fa-bounce" style="color: var(--primary)"></i>' : (idx + 1)}</span>
+        <span class="track-num">${isCurrent && isPlaying ? '<i class="fa-solid fa-volume-high fa-beat" style="color:var(--primary)"></i>' : (idx + 1)}</span>
         <img class="track-cover-img" src="${song.coverUrl}" alt="Cover" onerror="this.src='/uploads/covers/default.jpg'">
         <div class="track-details">
           <span class="track-title">${escapeHtml(song.title)}</span>
           <span class="track-artist">${escapeHtml(song.artist)}</span>
         </div>
         <span class="track-album">${escapeHtml(song.album || 'Single')}</span>
-        <span class="track-duration">${durationFormatted}</span>
+        <span class="track-duration">${formatTime(song.duration || 0)}</span>
         <div class="track-actions">
-          <button class="btn-icon ${isDownloaded ? 'downloaded' : ''}" onclick="toggleDownloadSong('${song.id}', event)" title="${isDownloaded ? 'Heruntergeladen' : 'Offline speichern'}">
-            <i class="${isDownloaded ? 'fa-solid fa-circle-down' : 'fa-regular fa-circle-down'}"></i>
+          <button class="btn-icon ${isDl ? 'downloaded' : ''}" onclick="toggleDownloadSong('${song.id}', event)" title="${isDl ? 'Offline gespeichert' : 'Offline speichern'}">
+            <i class="${isDl ? 'fa-solid fa-circle-down' : 'fa-regular fa-circle-down'}"></i>
           </button>
           <button class="btn-icon" onclick="deleteSong('${song.id}', event)" title="Löschen">
             <i class="fa-regular fa-trash-can"></i>
           </button>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
 }
 
-// --- 6. Audio Player Engine & Controls ---
+// --- Player ---
 function playSongById(songId) {
-  const index = songs.findIndex(s => s.id === songId);
-  if (index !== -1) {
-    playSong(index);
-  }
+  const i = songs.findIndex(s => s.id === songId);
+  if (i !== -1) playSong(i);
 }
 
 function playSong(index) {
   if (index < 0 || index >= songs.length) return;
-
   currentSongIndex = index;
-  const song = songs[currentSongIndex];
-
+  const song = songs[index];
   audioEngine.src = song.audioUrl;
   audioEngine.play().then(() => {
     isPlaying = true;
@@ -428,49 +269,30 @@ function playSong(index) {
     setupMediaSession(song);
     renderTrackList();
   }).catch(err => {
-    console.error('Audio playback failed:', err);
+    console.error('Playback error:', err);
     if (!navigator.onLine && !downloadedSongIds.has(song.id)) {
-      alert('Dieser Song ist nicht offline verfügbar. Lade ihn vorher herunter!');
+      alert('Song nicht offline verfügbar. Bitte zuerst herunterladen!');
     }
   });
 }
 
 function togglePlayPause() {
-  if (currentSongIndex === -1 && songs.length > 0) {
-    playSong(0);
-    return;
-  }
-
-  if (isPlaying) {
-    audioEngine.pause();
-    isPlaying = false;
-  } else {
-    audioEngine.play();
-    isPlaying = true;
-  }
+  if (currentSongIndex === -1 && songs.length > 0) { playSong(0); return; }
+  if (isPlaying) { audioEngine.pause(); isPlaying = false; }
+  else { audioEngine.play(); isPlaying = true; }
   updatePlayPauseBtn();
   renderTrackList();
 }
 
 function playNextSong() {
-  if (songs.length === 0) return;
-  if (isShuffle) {
-    const randomIndex = Math.floor(Math.random() * songs.length);
-    playSong(randomIndex);
-  } else {
-    const nextIndex = (currentSongIndex + 1) % songs.length;
-    playSong(nextIndex);
-  }
+  if (!songs.length) return;
+  playSong(isShuffle ? Math.floor(Math.random() * songs.length) : (currentSongIndex + 1) % songs.length);
 }
 
 function playPrevSong() {
-  if (songs.length === 0) return;
-  if (audioEngine.currentTime > 3) {
-    audioEngine.currentTime = 0;
-    return;
-  }
-  const prevIndex = (currentSongIndex - 1 + songs.length) % songs.length;
-  playSong(prevIndex);
+  if (!songs.length) return;
+  if (audioEngine.currentTime > 3) { audioEngine.currentTime = 0; return; }
+  playSong((currentSongIndex - 1 + songs.length) % songs.length);
 }
 
 function updatePlayPauseBtn() {
@@ -480,7 +302,6 @@ function updatePlayPauseBtn() {
 function updatePlayerUI() {
   if (currentSongIndex === -1) return;
   const song = songs[currentSongIndex];
-
   playerTitle.textContent = song.title;
   playerArtist.textContent = song.artist;
   playerCover.src = song.coverUrl;
@@ -489,228 +310,117 @@ function updatePlayerUI() {
 
 function updatePlayerOfflineBadge() {
   if (currentSongIndex === -1) return;
-  const song = songs[currentSongIndex];
-  const isDownloaded = downloadedSongIds.has(song.id);
-
-  if (isDownloaded) {
-    playerOfflineBadge.style.color = 'var(--primary)';
-    playerOfflineBadge.title = 'Offline Verfügbar';
-  } else {
-    playerOfflineBadge.style.color = 'var(--text-muted)';
-    playerOfflineBadge.title = 'Nur Online verfügbar';
-  }
+  const dl = downloadedSongIds.has(songs[currentSongIndex].id);
+  playerOfflineBadge.style.color = dl ? 'var(--primary)' : 'var(--text-muted)';
 }
 
-// Media Session API for Lock Screen Controls
 function setupMediaSession(song) {
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: song.title,
-      artist: song.artist,
-      album: song.album || 'Single',
-      artwork: [
-        { src: song.coverUrl, sizes: '512x512', type: 'image/jpeg' }
-      ]
-    });
-
-    navigator.mediaSession.setActionHandler('play', () => togglePlayPause());
-    navigator.mediaSession.setActionHandler('pause', () => togglePlayPause());
-    navigator.mediaSession.setActionHandler('previoustrack', () => playPrevSong());
-    navigator.mediaSession.setActionHandler('nexttrack', () => playNextSong());
-    navigator.mediaSession.setActionHandler('seekto', (details) => {
-      if (details.seekTime) audioEngine.currentTime = details.seekTime;
-    });
-  }
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: song.title, artist: song.artist, album: song.album || '',
+    artwork: [{ src: song.coverUrl, sizes: '512x512', type: 'image/jpeg' }]
+  });
+  navigator.mediaSession.setActionHandler('play', togglePlayPause);
+  navigator.mediaSession.setActionHandler('pause', togglePlayPause);
+  navigator.mediaSession.setActionHandler('previoustrack', playPrevSong);
+  navigator.mediaSession.setActionHandler('nexttrack', playNextSong);
 }
 
-// Audio Engine Events
 audioEngine.addEventListener('timeupdate', () => {
-  const current = audioEngine.currentTime;
-  const duration = audioEngine.duration || 0;
-
-  timeCurrent.textContent = formatTime(current);
-  timeTotal.textContent = formatTime(duration);
-
-  if (duration > 0) {
-    const percentage = (current / duration) * 100;
-    seekFill.style.width = `${percentage}%`;
-  }
+  const c = audioEngine.currentTime, d = audioEngine.duration || 0;
+  timeCurrent.textContent = formatTime(c);
+  timeTotal.textContent = formatTime(d);
+  if (d > 0) seekFill.style.width = `${(c / d) * 100}%`;
 });
 
 audioEngine.addEventListener('ended', () => {
-  if (isRepeat) {
-    audioEngine.currentTime = 0;
-    audioEngine.play();
-  } else {
-    playNextSong();
-  }
+  if (isRepeat) { audioEngine.currentTime = 0; audioEngine.play(); }
+  else playNextSong();
 });
 
-// Seek Bar Interaction
-seekBar.addEventListener('click', (e) => {
-  const rect = seekBar.getBoundingClientRect();
-  const clickX = e.clientX - rect.left;
-  const width = rect.width;
-  const duration = audioEngine.duration;
-
-  if (duration) {
-    audioEngine.currentTime = (clickX / width) * duration;
-  }
+seekBar.addEventListener('click', e => {
+  const { left, width } = seekBar.getBoundingClientRect();
+  const d = audioEngine.duration;
+  if (d) audioEngine.currentTime = ((e.clientX - left) / width) * d;
 });
 
-// Volume Controls
-volumeSlider.addEventListener('input', (e) => {
-  const val = parseFloat(e.target.value);
-  audioEngine.volume = val;
-  if (val === 0) {
-    volumeIcon.className = 'fa-solid fa-volume-xmark';
-  } else if (val < 0.5) {
-    volumeIcon.className = 'fa-solid fa-volume-low';
-  } else {
-    volumeIcon.className = 'fa-solid fa-volume-high';
-  }
+volumeSlider.addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  audioEngine.volume = v;
+  volumeIcon.className = v === 0 ? 'fa-solid fa-volume-xmark' : v < 0.5 ? 'fa-solid fa-volume-low' : 'fa-solid fa-volume-high';
 });
 
-// Controls Handlers
 btnPlayPause.addEventListener('click', togglePlayPause);
 btnNext.addEventListener('click', playNextSong);
 btnPrev.addEventListener('click', playPrevSong);
+btnShuffle.addEventListener('click', () => { isShuffle = !isShuffle; btnShuffle.classList.toggle('active', isShuffle); });
+btnRepeat.addEventListener('click', () => { isRepeat = !isRepeat; btnRepeat.classList.toggle('active', isRepeat); });
+playerDownloadBtn.addEventListener('click', () => { if (currentSongIndex !== -1) toggleDownloadSong(songs[currentSongIndex].id); });
 
-btnShuffle.addEventListener('click', () => {
-  isShuffle = !isShuffle;
-  btnShuffle.classList.toggle('active', isShuffle);
-});
+searchInput.addEventListener('input', e => { searchQuery = e.target.value; renderTrackList(); });
+filterOfflineBtn.addEventListener('click', () => { filterOfflineOnly = !filterOfflineOnly; filterOfflineBtn.classList.toggle('active', filterOfflineOnly); renderTrackList(); });
 
-btnRepeat.addEventListener('click', () => {
-  isRepeat = !isRepeat;
-  btnRepeat.classList.toggle('active', isRepeat);
-});
+document.getElementById('nav-offline').addEventListener('click', () => { filterOfflineOnly = true; filterOfflineBtn.classList.add('active'); renderTrackList(); });
+document.getElementById('nav-home').addEventListener('click', () => { filterOfflineOnly = false; searchQuery = ''; searchInput.value = ''; filterOfflineBtn.classList.remove('active'); renderTrackList(); });
 
-playerDownloadBtn.addEventListener('click', () => {
-  if (currentSongIndex !== -1) {
-    toggleDownloadSong(songs[currentSongIndex].id);
-  }
-});
-
-// Search & Filter
-searchInput.addEventListener('input', (e) => {
-  searchQuery = e.target.value;
-  renderTrackList();
-});
-
-filterOfflineBtn.addEventListener('click', () => {
-  filterOfflineOnly = !filterOfflineOnly;
-  filterOfflineBtn.classList.toggle('active', filterOfflineOnly);
-  renderTrackList();
-});
-
-document.getElementById('nav-offline').addEventListener('click', () => {
-  filterOfflineOnly = true;
-  filterOfflineBtn.classList.add('active');
-  renderTrackList();
-});
-
-document.getElementById('nav-home').addEventListener('click', () => {
-  filterOfflineOnly = false;
-  searchQuery = '';
-  searchInput.value = '';
-  filterOfflineBtn.classList.remove('active');
-  renderTrackList();
-});
-
-// Delete Song
 async function deleteSong(songId, event) {
   if (event) event.stopPropagation();
-  if (!confirm('Möchtest du diesen Song wirklich löschen?')) return;
-
+  if (!confirm('Löschen?')) return;
   try {
     const res = await fetch(`/api/songs/${songId}`, { method: 'DELETE' });
     if (res.ok) {
       songs = songs.filter(s => s.id !== songId);
       downloadedSongIds.delete(songId);
       localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
-      renderTrackList();
-      updateStats();
-    } else {
-      alert('Fehler beim Löschen des Songs');
+      renderTrackList(); updateStats();
     }
-  } catch (err) {
-    alert('Löschen im Offline-Modus nicht möglich.');
-  }
+  } catch { alert('Löschen fehlgeschlagen.'); }
 }
 
-// Upload Modal Management
 openUploadBtn.addEventListener('click', () => uploadModal.classList.add('active'));
 closeUploadBtn.addEventListener('click', () => uploadModal.classList.remove('active'));
 cancelUploadBtn.addEventListener('click', () => uploadModal.classList.remove('active'));
 
-uploadForm.addEventListener('submit', async (e) => {
+uploadForm.addEventListener('submit', async e => {
   e.preventDefault();
-
-  const title = document.getElementById('upload-title').value.trim();
-  const artist = document.getElementById('upload-artist').value.trim();
-  const album = document.getElementById('upload-album').value.trim();
   const audioFile = document.getElementById('upload-audio').files[0];
-  const coverFile = document.getElementById('upload-cover').files[0];
+  if (!audioFile) { alert('Bitte eine Audiodatei auswählen.'); return; }
 
-  if (!audioFile) {
-    alert('Bitte wähle eine Audiodatei aus.');
-    return;
-  }
+  const fd = new FormData();
+  fd.append('title', document.getElementById('upload-title').value.trim());
+  fd.append('artist', document.getElementById('upload-artist').value.trim());
+  fd.append('album', document.getElementById('upload-album').value.trim());
+  fd.append('audio', audioFile);
+  const cover = document.getElementById('upload-cover').files[0];
+  if (cover) fd.append('cover', cover);
 
-  const formData = new FormData();
-  formData.append('title', title);
-  formData.append('artist', artist);
-  formData.append('album', album);
-  formData.append('audio', audioFile);
-  if (coverFile) {
-    formData.append('cover', coverFile);
-  }
-
-  const submitBtn = document.getElementById('submit-upload-btn');
-  submitBtn.disabled = true;
-  submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lade hoch...';
+  const btn = document.getElementById('submit-upload-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Hochladen...';
 
   try {
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData
-    });
-
+    const res = await fetch('/api/upload', { method: 'POST', body: fd });
     if (res.ok) {
-      const newSong = await res.json();
-      songs.unshift(newSong);
+      const song = await res.json();
+      songs.unshift(song);
       localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
-      renderTrackList();
-      updateStats();
+      renderTrackList(); updateStats();
       uploadModal.classList.remove('active');
       uploadForm.reset();
-      alert('Song erfolgreich hochgeladen!');
-    } else {
-      alert('Fehler beim Hochladen.');
-    }
-  } catch (err) {
-    console.error(err);
-    alert('Netzwerkfehler beim Hochladen.');
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = '<i class="fa-solid fa-upload"></i> Hochladen';
-  }
+    } else { alert('Upload fehlgeschlagen.'); }
+  } catch { alert('Netzwerkfehler.'); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-upload"></i> Hochladen'; }
 });
 
-// Helpers
-function formatTime(seconds) {
-  if (isNaN(seconds)) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+function formatTime(s) {
+  if (isNaN(s)) return '0:00';
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 }
 
 function escapeHtml(str) {
-  return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Global Initialization
 window.addEventListener('DOMContentLoaded', async () => {
   await initServiceWorker();
   await loadDownloadedCache();
