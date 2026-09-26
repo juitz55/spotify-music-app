@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Spotify Music Player (Offline & 24/7)</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1DB954">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <i class="fa-brands fa-spotify brand-icon"></i>
+        <span class="brand-name">Spotify<span class="brand-sub">Offline</span></span>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" id="nav-home">
+          <i class="fa-solid fa-house"></i> Startseite
+        </button>
+        <button class="nav-item" id="nav-library">
+          <i class="fa-solid fa-lines-leaning"></i> Bibliothek
+        </button>
+        <button class="nav-item" id="nav-offline">
+          <i class="fa-solid fa-circle-down"></i> Offline Musik <span class="badge" id="offline-count-badge">0</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-actions">
+        <button class="btn btn-primary btn-full" id="open-upload-btn">
+          <i class="fa-solid fa-plus"></i> Song Hochladen
+        </button>
+      </div>
+
+      <div class="network-status-box" id="network-status">
+        <div class="status-indicator online" id="status-dot"></div>
+        <span id="status-text">Online (24/7 Backend)</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+
+      <!-- Header Topbar -->
+      <header class="topbar">
+        <div class="search-box">
+          <i class="fa-solid fa-magnifying-glass search-icon"></i>
+          <input type="text" id="search-input" placeholder="Titel, Künstler oder Album suchen...">
+        </div>
+
+        <div class="topbar-right">
+          <button class="filter-chip" id="filter-offline-only">
+            <i class="fa-solid fa-download"></i> Nur Heruntergeladene
+          </button>
+          <div class="user-profile">
+            <i class="fa-solid fa-user"></i>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Section Header Banner -->
+      <section class="hero-banner">
+        <div class="hero-content">
+          <span class="hero-tag"><i class="fa-solid fa-bolt"></i> 24/7 ONLINE & OFFLINE APPS</span>
+          <h1 class="hero-title">Deine Musik. Überall offline hören.</h1>
+          <p class="hero-desc">Lade deine Lieblingssongs herunter – sie bleiben direkt in deiner App gespeichert, selbst im Flugmodus!</p>
+          <div class="hero-stats">
+            <div class="stat-item">
+              <span class="stat-num" id="stat-total-songs">0</span>
+              <span class="stat-label">Songs Gesamt</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-num" id="stat-offline-songs">0</span>
+              <span class="stat-label">Offline Verfügbar</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Track List Section -->
+      <section class="track-section">
+        <div class="section-header">
+          <h2 id="section-title">Alle Songs</h2>
+          <span class="track-count" id="track-count-text">0 Titel</span>
+        </div>
+
+        <div class="track-list" id="track-list-container">
+          <!-- Dynamically populated tracks -->
+          <div class="loading-state">
+            <i class="fa-solid fa-spinner fa-spin"></i> Lade Musikbibliothek...
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Floating Bottom Audio Player -->
+    <footer class="player-bar">
+      
+      <!-- Current Song Info -->
+      <div class="player-left">
+        <div class="cover-wrapper">
+          <img src="/uploads/covers/default.jpg" id="player-cover" alt="Album Cover">
+        </div>
+        <div class="song-details">
+          <span class="song-title" id="player-title">Kein Song ausgewählt</span>
+          <span class="song-artist" id="player-artist">Drücke Play zum Starten</span>
+        </div>
+        <button class="btn-icon" id="player-offline-badge" title="Offline Status">
+          <i class="fa-regular fa-circle-check"></i>
+        </button>
+      </div>
+
+      <!-- Controls & Progress Bar -->
+      <div class="player-center">
+        <div class="player-controls">
+          <button class="btn-control" id="btn-shuffle" title="Zufallswiedergabe"><i class="fa-solid fa-shuffle"></i></button>
+          <button class="btn-control" id="btn-prev" title="Vorheriger Song"><i class="fa-solid fa-backward-step"></i></button>
+          <button class="btn-control btn-play" id="btn-play-pause" title="Abspielen / Pause"><i class="fa-solid fa-play"></i></button>
+          <button class="btn-control" id="btn-next" title="Nächster Song"><i class="fa-solid fa-forward-step"></i></button>
+          <button class="btn-control" id="btn-repeat" title="Wiederholen"><i class="fa-solid fa-repeat"></i></button>
+        </div>
+
+        <div class="player-progress">
+          <span class="time-text" id="time-current">0:00</span>
+          <div class="progress-bar-container" id="seek-bar">
+            <div class="progress-bar-fill" id="seek-fill"></div>
+          </div>
+          <span class="time-text" id="time-total">0:00</span>
+        </div>
+      </div>
+
+      <!-- Volume & Downloads -->
+      <div class="player-right">
+        <button class="btn-icon" id="player-download-btn" title="Aktuellen Song herunterladen">
+          <i class="fa-solid fa-arrow-down-to-line"></i>
+        </button>
+        <div class="volume-container">
+          <i class="fa-solid fa-volume-high" id="volume-icon"></i>
+          <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0.8">
+        </div>
+      </div>
+    </footer>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay" id="upload-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3><i class="fa-solid fa-cloud-arrow-up"></i> Song hochladen</h3>
+          <button class="close-btn" id="close-upload-modal">&times;</button>
+        </div>
+        
+        <form id="upload-form" class="modal-body">
+          <div class="form-group">
+            <label>Titel</label>
+            <input type="text" id="upload-title" placeholder="z.B. Blinding Lights" required>
+          </div>
+
+          <div class="form-group">
+            <label>Künstler</label>
+            <input type="text" id="upload-artist" placeholder="z.B. The Weeknd" required>
+          </div>
+
+          <div class="form-group">
+            <label>Album (Optional)</label>
+            <input type="text" id="upload-album" placeholder="z.B. After Hours">
+          </div>
+
+          <div class="form-group">
+            <label>Audio Datei (MP3 / WAV / FLAC)</label>
+            <input type="file" id="upload-audio" accept="audio/*" required>
+          </div>
+
+          <div class="form-group">
+            <label>Cover Bild (Optional)</label>
+            <input type="file" id="upload-cover" accept="image/*">
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="cancel-upload-btn">Abbrechen</button>
+            <button type="submit" class="btn btn-primary" id="submit-upload-btn">
+              <i class="fa-solid fa-upload"></i> Hochladen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <audio id="audio-engine" preload="metadata"></audio>
+  <script src="/app.js"></script>
+</body>
+</html>
