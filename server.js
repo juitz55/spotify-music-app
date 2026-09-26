@@ -3,6 +3,10 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const { exec, execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execAsync = promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +30,18 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+// Detect yt-dlp binary path
+async function getYtDlpPath() {
+  const candidates = ['yt-dlp', '/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', path.join(__dirname, 'yt-dlp')];
+  for (const c of candidates) {
+    try {
+      await execAsync(`"${c}" --version`);
+      return c;
+    } catch {}
+  }
+  return null;
+}
+
 // Storage helper
 function loadSongs() {
   if (!fs.existsSync(SONGS_FILE)) {
@@ -46,10 +62,8 @@ function loadSongs() {
     return initialSongs;
   }
   try {
-    const data = fs.readFileSync(SONGS_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (err) {
-    console.error('Error reading songs.json:', err);
+    return JSON.parse(fs.readFileSync(SONGS_FILE, 'utf-8'));
+  } catch {
     return [];
   }
 }
@@ -58,162 +72,17 @@ function saveSongs(songs) {
   fs.writeFileSync(SONGS_FILE, JSON.stringify(songs, null, 2));
 }
 
-// Multer Config for file upload
+// Multer Config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (file.fieldname === 'audio') {
-      cb(null, AUDIO_DIR);
-    } else if (file.fieldname === 'cover') {
-      cb(null, COVERS_DIR);
-    } else {
-      cb(null, UPLOADS_DIR);
-    }
+    cb(null, file.fieldname === 'audio' ? AUDIO_DIR : COVERS_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `${uniqueSuffix}${ext}`);
+    cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max per song
-});
-
-// Helper: Extract YouTube Video ID
-function extractVideoId(url) {
-  if (!url) return null;
-  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-  return match ? match[1] : null;
-}
-
-// Multi-Layer YouTube Downloader (Cobalt + Invidious + Piped + oEmbed)
-async function fetchYouTubeViaAPI(url, videoId) {
-  // Layer 1: Cobalt API
-  try {
-    console.log(`[YouTube API] Trying Cobalt API for videoId ${videoId}...`);
-    const cobaltRes = await fetch('https://api.cobalt.tools/', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-      },
-      body: JSON.stringify({
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        downloadMode: 'audio',
-        audioFormat: 'mp3'
-      })
-    });
-
-    if (cobaltRes.ok) {
-      const data = await cobaltRes.json();
-      if (data && data.url) {
-        let title = 'YouTube Audio';
-        let author = 'YouTube Artist';
-        const cover = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-        try {
-          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
-          if (oembedRes.ok) {
-            const oembed = await oembedRes.json();
-            title = oembed.title || title;
-            author = oembed.author_name || author;
-          }
-        } catch (e) {}
-
-        console.log(`[YouTube API] Cobalt succeeded for "${title}"`);
-        return {
-          title,
-          artist: author,
-          duration: 0,
-          coverUrl: cover,
-          streamUrl: data.url
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('[YouTube API] Cobalt API error:', err.message);
-  }
-
-  // Layer 2: Invidious API
-  const invidiousInstances = [
-    `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
-    `https://inv.tux.pizza/api/v1/videos/${videoId}`,
-    `https://invidious.drgns.space/api/v1/videos/${videoId}`,
-    `https://vid.puffyan.us/api/v1/videos/${videoId}`
-  ];
-
-  for (const invUrl of invidiousInstances) {
-    try {
-      console.log(`[YouTube API] Trying Invidious API ${invUrl}...`);
-      const invRes = await fetch(invUrl);
-      if (invRes.ok) {
-        const data = await invRes.json();
-        if (data && data.adaptiveFormats) {
-          const audio = data.adaptiveFormats.find(f => f.type && f.type.includes('audio/'));
-          if (audio && audio.url) {
-            console.log(`[YouTube API] Invidious succeeded for "${data.title}"`);
-            return {
-              title: data.title || 'YouTube Audio',
-              artist: data.author || 'YouTube Artist',
-              duration: parseInt(data.lengthSeconds) || 0,
-              coverUrl: (data.videoThumbnails && data.videoThumbnails.length > 0) ? data.videoThumbnails[0].url : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-              streamUrl: audio.url
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`[YouTube API] Invidious ${invUrl} failed:`, e.message);
-    }
-  }
-
-  // Layer 3: Piped API
-  const pipedInstances = [
-    `https://pipedapi.kavin.rocks/streams/${videoId}`,
-    `https://api.piped.privacydev.net/streams/${videoId}`,
-    `https://pipedapi.palvelintila.fi/streams/${videoId}`,
-    `https://pipedapi.adminforge.de/streams/${videoId}`
-  ];
-
-  for (const pipedUrl of pipedInstances) {
-    try {
-      console.log(`[YouTube API] Trying Piped API ${pipedUrl}...`);
-      const pipedRes = await fetch(pipedUrl);
-      if (pipedRes.ok) {
-        const data = await pipedRes.json();
-        if (data && data.audioStreams && data.audioStreams.length > 0) {
-          const best = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-          console.log(`[YouTube API] Piped succeeded for "${data.title}"`);
-          return {
-            title: data.title || 'YouTube Audio',
-            artist: data.uploader || 'YouTube Artist',
-            duration: parseInt(data.duration) || 0,
-            coverUrl: data.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-            streamUrl: best.url
-          };
-        }
-      }
-    } catch (e) {
-      console.warn(`[YouTube API] Piped ${pipedUrl} failed:`, e.message);
-    }
-  }
-
-  return null;
-}
-
-// Helper: Download Remote Stream URL to local file
-async function downloadFile(streamUrl, targetPath) {
-  const response = await fetch(streamUrl, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  fs.writeFileSync(targetPath, buffer);
-}
+const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
 
 // API Routes
 app.get('/api/health', (req, res) => {
@@ -221,122 +90,124 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/songs', (req, res) => {
-  const songs = loadSongs();
-  res.json(songs);
+  res.json(loadSongs());
 });
 
-// Stream audio with HTTP Range support
+// Stream audio with Range support
 app.get('/api/stream/:id', (req, res) => {
-  const songs = loadSongs();
-  const song = songs.find(s => s.id === req.params.id);
-
-  if (!song) {
-    return res.status(404).send('Song not found');
-  }
+  const song = loadSongs().find(s => s.id === req.params.id);
+  if (!song) return res.status(404).send('Song not found');
 
   const filePath = path.join(AUDIO_DIR, song.fileName);
-
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).send('Audio file missing');
-  }
+  if (!fs.existsSync(filePath)) return res.status(404).send('Audio file missing');
 
   const stat = fs.statSync(filePath);
   const fileSize = stat.size;
   const range = req.headers.range;
 
   if (range) {
-    const parts = range.replace(/bytes=/, "").split("-");
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const chunksize = (end - start) + 1;
-    const file = fs.createReadStream(filePath, { start, end });
-    const head = {
+    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(startStr, 10);
+    const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+    const chunksize = end - start + 1;
+    res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
       'Content-Type': 'audio/mpeg',
-    };
-    res.writeHead(206, head);
-    file.pipe(res);
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
-    const head = {
-      'Content-Length': fileSize,
-      'Content-Type': 'audio/mpeg',
-    };
-    res.writeHead(200, head);
+    res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'audio/mpeg' });
     fs.createReadStream(filePath).pipe(res);
   }
 });
 
-// YouTube Import Endpoint
+// ============================================================
+// YouTube Import via yt-dlp (most reliable method)
+// ============================================================
 app.post('/api/youtube-import', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL fehlt' });
+
+  const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:.*[?&]v=|embed\/|v\/))([\w-]{11})/);
+  const videoId = videoIdMatch ? videoIdMatch[1] : null;
+  if (!videoId) return res.status(400).json({ error: 'Ungültige YouTube URL' });
+
+  const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const songId = 'yt-' + Date.now();
+  const outputTemplate = path.join(AUDIO_DIR, `${songId}.%(ext)s`);
+  const finalFile = path.join(AUDIO_DIR, `${songId}.mp3`);
+
   try {
-    const { url } = req.body;
-    if (!url || typeof url !== 'string') {
-      return res.status(400).json({ error: 'YouTube URL ist erforderlich' });
+    const ytdlpPath = await getYtDlpPath();
+    if (!ytdlpPath) {
+      return res.status(500).json({ error: 'yt-dlp ist nicht installiert auf dem Server' });
     }
 
-    const cleanUrl = url.trim();
-    const videoId = extractVideoId(cleanUrl);
+    // Get video metadata first
+    const metaCmd = `"${ytdlpPath}" --dump-json --no-playlist "${cleanUrl}"`;
+    const { stdout: metaOut } = await execAsync(metaCmd, { timeout: 30000 });
+    const meta = JSON.parse(metaOut);
 
-    if (!videoId) {
-      return res.status(400).json({ error: 'Ungültiges YouTube URL Format (z.B. https://youtu.be/...)' });
+    const title = meta.title || 'YouTube Track';
+    const artist = meta.uploader || meta.channel || 'YouTube Artist';
+    const duration = meta.duration || 0;
+    const coverUrl = meta.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    // Download best audio as mp3
+    const dlCmd = `"${ytdlpPath}" -x --audio-format mp3 --audio-quality 0 --no-playlist -o "${outputTemplate}" "${cleanUrl}"`;
+    console.log(`[yt-dlp] Downloading: ${cleanUrl}`);
+    await execAsync(dlCmd, { timeout: 120000 });
+
+    // Handle .webm → mp3 naming
+    let actualFile = finalFile;
+    if (!fs.existsSync(finalFile)) {
+      const webmFile = path.join(AUDIO_DIR, `${songId}.webm`);
+      if (fs.existsSync(webmFile)) {
+        fs.renameSync(webmFile, finalFile);
+        actualFile = finalFile;
+      } else {
+        return res.status(500).json({ error: 'Audio-Datei nach dem Download nicht gefunden' });
+      }
     }
 
-    console.log(`[YouTube Import] Extracting videoId ${videoId}...`);
-    const ytData = await fetchYouTubeViaAPI(cleanUrl, videoId);
-
-    if (!ytData || !ytData.streamUrl) {
-      return res.status(500).json({ error: 'Der YouTube-Link konnte nicht verarbeitet werden. Überprüfe die URL.' });
-    }
-
-    const songId = 'yt-' + Date.now();
-    const fileName = `${songId}.mp3`;
-    const audioFilePath = path.join(AUDIO_DIR, fileName);
-
-    console.log(`[YouTube Import] Downloading audio for "${ytData.title}"...`);
-    await downloadFile(ytData.streamUrl, audioFilePath);
-
-    console.log(`[YouTube Import] Download complete: ${fileName}`);
-
-    const songs = loadSongs();
     const newSong = {
       id: songId,
-      title: ytData.title,
-      artist: ytData.artist,
+      title,
+      artist,
       album: 'YouTube Import',
-      duration: ytData.duration,
-      fileName: fileName,
-      coverUrl: ytData.coverUrl,
+      duration,
+      fileName: `${songId}.mp3`,
+      coverUrl,
       audioUrl: `/api/stream/${songId}`,
       addedAt: new Date().toISOString()
     };
 
+    const songs = loadSongs();
     songs.unshift(newSong);
     saveSongs(songs);
 
+    console.log(`[yt-dlp] Done: "${title}"`);
     res.status(201).json(newSong);
 
   } catch (err) {
-    console.error('[YouTube Import] Error:', err);
-    res.status(500).json({ error: 'YouTube Import fehlgeschlagen: ' + err.message });
+    console.error('[yt-dlp] Error:', err.message);
+    // Clean up partial files
+    try {
+      [finalFile, path.join(AUDIO_DIR, `${songId}.webm`)].forEach(f => { if (fs.existsSync(f)) fs.unlinkSync(f); });
+    } catch {}
+    res.status(500).json({ error: 'YouTube Download fehlgeschlagen: ' + err.message.split('\n')[0] });
   }
 });
 
-// Upload song endpoint
-app.post('/api/upload', upload.fields([
-  { name: 'audio', maxCount: 1 },
-  { name: 'cover', maxCount: 1 }
-]), (req, res) => {
+// Upload song
+app.post('/api/upload', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'cover', maxCount: 1 }]), (req, res) => {
   try {
-    if (!req.files || !req.files.audio) {
-      return res.status(400).json({ error: 'Audio file is required' });
-    }
+    if (!req.files?.audio) return res.status(400).json({ error: 'Audio file required' });
 
     const audioFile = req.files.audio[0];
-    const coverFile = req.files.cover ? req.files.cover[0] : null;
-
-    const songs = loadSongs();
+    const coverFile = req.files.cover?.[0];
     const songId = 'song-' + Date.now();
 
     const newSong = {
@@ -351,42 +222,39 @@ app.post('/api/upload', upload.fields([
       addedAt: new Date().toISOString()
     };
 
+    const songs = loadSongs();
     songs.unshift(newSong);
     saveSongs(songs);
-
     res.status(201).json(newSong);
   } catch (err) {
-    console.error('Upload error:', err);
-    res.status(500).json({ error: 'Failed to upload song' });
+    res.status(500).json({ error: 'Upload failed: ' + err.message });
   }
 });
 
 // Delete song
 app.delete('/api/songs/:id', (req, res) => {
   let songs = loadSongs();
-  const songIndex = songs.findIndex(s => s.id === req.params.id);
+  const idx = songs.findIndex(s => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Song not found' });
 
-  if (songIndex === -1) {
-    return res.status(404).json({ error: 'Song not found' });
-  }
-
-  const [song] = songs.splice(songIndex, 1);
+  const [song] = songs.splice(idx, 1);
   saveSongs(songs);
 
-  // Delete audio file asynchronously
   const audioPath = path.join(AUDIO_DIR, song.fileName);
-  if (fs.existsSync(audioPath)) {
-    fs.unlink(audioPath, (err) => { if (err) console.error(err); });
-  }
+  if (fs.existsSync(audioPath)) fs.unlink(audioPath, () => {});
 
   res.json({ success: true, deletedId: req.params.id });
 });
 
-// Fallback to PWA index.html for unknown routes
+// Fallback to PWA
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎵 Spotify-Style Music Server running on http://localhost:${PORT}`);
+  console.log(`🎵 Music Server running on http://localhost:${PORT}`);
+  getYtDlpPath().then(p => {
+    if (p) console.log(`✅ yt-dlp found at: ${p}`);
+    else console.warn('⚠️ yt-dlp not found! YouTube import will not work.');
+  });
 });
