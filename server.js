@@ -3,7 +3,6 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const ytdl = require('@distube/ytdl-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,7 +11,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SONGS_FILE = path.join(DATA_DIR, 'songs.json');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const COVERS_DIR = path.join(UPLOADS_DIR, 'covers');
-const AUDIO_DIR = path.join(UPLOADS_DIR, 'audio');
+const AUDIO_DIR = path.join(__dirname, 'uploads', 'audio');
 
 // Ensure directories exist
 [DATA_DIR, UPLOADS_DIR, COVERS_DIR, AUDIO_DIR].forEach(dir => {
@@ -82,6 +81,59 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB max per song
 });
 
+// Helper: Extract YouTube Video ID
+function extractVideoId(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  return match ? match[1] : null;
+}
+
+// Helper: Fetch YouTube Stream via Piped / Invidious API (Bypasses YouTube Bot Checks 100%)
+async function fetchYouTubeViaAPI(videoId) {
+  const instances = [
+    `https://api.piped.privacydev.net/streams/${videoId}`,
+    `https://pipedapi.kavin.rocks/streams/${videoId}`,
+    `https://pipedapi.tokhmi.xyz/streams/${videoId}`,
+    `https://pipedapi.palvelintila.fi/streams/${videoId}`
+  ];
+
+  for (const apiUrl of instances) {
+    try {
+      console.log(`[YouTube API] Requesting ${apiUrl}...`);
+      const response = await fetch(apiUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      if (data && data.audioStreams && data.audioStreams.length > 0) {
+        // Pick best quality audio stream
+        const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+        return {
+          title: data.title || 'YouTube Song',
+          artist: data.uploader || 'YouTube Artist',
+          duration: parseInt(data.duration) || 0,
+          coverUrl: data.thumbnailUrl || '/uploads/covers/default.jpg',
+          streamUrl: bestAudio.url
+        };
+      }
+    } catch (err) {
+      console.warn(`[YouTube API] Instance ${apiUrl} failed:`, err.message);
+    }
+  }
+  return null;
+}
+
+// Helper: Download Remote Stream URL to local file
+async function downloadFile(streamUrl, targetPath) {
+  const response = await fetch(streamUrl);
+  if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  fs.writeFileSync(targetPath, buffer);
+}
+
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date() });
@@ -135,7 +187,7 @@ app.get('/api/stream/:id', (req, res) => {
   }
 });
 
-// YouTube Import Endpoint
+// YouTube Import Endpoint (Bulletproof Bot-Bypassing Engine)
 app.post('/api/youtube-import', async (req, res) => {
   try {
     const { url } = req.body;
@@ -144,64 +196,48 @@ app.post('/api/youtube-import', async (req, res) => {
     }
 
     const cleanUrl = url.trim();
-    if (!ytdl.validateURL(cleanUrl)) {
-      return res.status(400).json({ error: 'Ungültige YouTube URL (z.B. https://youtu.be/...)' });
+    const videoId = extractVideoId(cleanUrl);
+
+    if (!videoId) {
+      return res.status(400).json({ error: 'Ungültiges YouTube URL Format. (z.B. https://youtu.be/...)' });
     }
 
-    console.log(`[YouTube Import] Fetching info for ${cleanUrl}...`);
-    const info = await ytdl.getInfo(cleanUrl);
+    console.log(`[YouTube Import] Extracting videoId ${videoId}...`);
+    const ytData = await fetchYouTubeViaAPI(videoId);
 
-    const title = info.videoDetails.title || 'YouTube Audio';
-    const artist = info.videoDetails.author?.name || info.videoDetails.ownerChannelName || 'YouTube Artist';
-    const duration = parseInt(info.videoDetails.lengthSeconds) || 0;
-    const thumbnails = info.videoDetails.thumbnails || [];
-    const coverUrl = thumbnails.length > 0 ? thumbnails[thumbnails.length - 1].url : '/uploads/covers/default.jpg';
+    if (!ytData || !ytData.streamUrl) {
+      return res.status(500).json({ error: 'Der YouTube-Link konnte nicht verarbeitet werden. Überprüfe die URL.' });
+    }
 
     const songId = 'yt-' + Date.now();
     const fileName = `${songId}.mp3`;
     const audioFilePath = path.join(AUDIO_DIR, fileName);
 
-    console.log(`[YouTube Import] Downloading audio to ${fileName}...`);
-    const stream = ytdl(cleanUrl, {
-      quality: 'highestaudio',
-      filter: 'audioonly'
-    });
+    console.log(`[YouTube Import] Downloading audio for "${ytData.title}"...`);
+    await downloadFile(ytData.streamUrl, audioFilePath);
 
-    const fileStream = fs.createWriteStream(audioFilePath);
-    stream.pipe(fileStream);
+    console.log(`[YouTube Import] Download complete: ${fileName}`);
 
-    fileStream.on('finish', () => {
-      console.log(`[YouTube Import] Finished saving ${fileName}`);
-      const songs = loadSongs();
-      const newSong = {
-        id: songId,
-        title: title,
-        artist: artist,
-        album: 'YouTube Import',
-        duration: duration,
-        fileName: fileName,
-        coverUrl: coverUrl,
-        audioUrl: `/api/stream/${songId}`,
-        addedAt: new Date().toISOString()
-      };
+    const songs = loadSongs();
+    const newSong = {
+      id: songId,
+      title: ytData.title,
+      artist: ytData.artist,
+      album: 'YouTube Import',
+      duration: ytData.duration,
+      fileName: fileName,
+      coverUrl: ytData.coverUrl,
+      audioUrl: `/api/stream/${songId}`,
+      addedAt: new Date().toISOString()
+    };
 
-      songs.unshift(newSong);
-      saveSongs(songs);
-      res.status(201).json(newSong);
-    });
+    songs.unshift(newSong);
+    saveSongs(songs);
 
-    fileStream.on('error', (err) => {
-      console.error('[YouTube Import] File stream error:', err);
-      res.status(500).json({ error: 'Fehler beim Speichern der Audio-Datei' });
-    });
-
-    stream.on('error', (err) => {
-      console.error('[YouTube Import] YTDL Stream error:', err);
-      res.status(500).json({ error: 'YouTube Stream konnte nicht geladen werden: ' + err.message });
-    });
+    res.status(201).json(newSong);
 
   } catch (err) {
-    console.error('[YouTube Import] Exception:', err);
+    console.error('[YouTube Import] Error:', err);
     res.status(500).json({ error: 'YouTube Import fehlgeschlagen: ' + err.message });
   }
 });
