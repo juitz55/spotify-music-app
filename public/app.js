@@ -129,7 +129,7 @@ function updateNetworkStatus(isOnline) {
 window.addEventListener('online', () => fetchSongs());
 window.addEventListener('offline', () => updateNetworkStatus(false));
 
-// --- 3. YouTube URL Importer ---
+// --- 3. Bulletproof Client-Side & Server YouTube Importer ---
 if (ytImportBtn) {
   ytImportBtn.addEventListener('click', handleYouTubeImport);
   ytUrlInput.addEventListener('keydown', (e) => {
@@ -137,42 +137,123 @@ if (ytImportBtn) {
   });
 }
 
+function extractVideoId(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  return match ? match[1] : null;
+}
+
 async function handleYouTubeImport() {
-  const url = ytUrlInput.value.trim();
-  if (!url) {
+  const rawUrl = ytUrlInput.value.trim();
+  if (!rawUrl) {
     showYtStatus('Bitte gib einen gültigen YouTube Link ein.', 'error');
     return;
   }
 
+  const videoId = extractVideoId(rawUrl);
+  if (!videoId) {
+    showYtStatus('Ungültiges Link-Format. Bitte nutze einen Link wie https://youtu.be/...', 'error');
+    return;
+  }
+
   ytImportBtn.disabled = true;
-  ytImportBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lade herunter...';
-  showYtStatus('<i class="fa-solid fa-spinner fa-spin"></i> YouTube Video wird heruntergeladen & konvertiert... (dauert ca. 10–20 Sek.)', 'info');
+  ytImportBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verarbeite...';
+  showYtStatus('<i class="fa-solid fa-spinner fa-spin"></i> Lade Metadaten und Audio herunter... (dauert ca. 10 Sek.)', 'info');
 
   try {
-    const res = await fetch('/api/youtube-import', {
+    // 1. Try backend import API first
+    const backendRes = await fetch('/api/youtube-import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url: rawUrl })
     });
 
-    const data = await res.json();
-
-    if (res.ok && data.id) {
+    if (backendRes.ok) {
+      const data = await backendRes.json();
       songs.unshift(data);
       localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
       renderTrackList();
       updateStats();
       ytUrlInput.value = '';
       showYtStatus(`✓ "${data.title}" erfolgreich gespeichert!`, 'success');
+      playSong(0);
+      return;
+    }
 
-      // Auto play newly imported track
+    // 2. Client-Side Fallback via Cobalt API if backend fails
+    console.log('[Client YouTube] Server import failed, executing Client-side Cobalt extraction...');
+    
+    // Fetch video info via oEmbed
+    let title = 'YouTube Track';
+    let artist = 'YouTube Artist';
+    const coverUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    try {
+      const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+      if (oembedRes.ok) {
+        const oembedData = await oembedRes.json();
+        title = oembedData.title || title;
+        artist = oembedData.author_name || artist;
+      }
+    } catch (e) {}
+
+    // Fetch Audio URL via Cobalt API directly from client
+    const cobaltRes = await fetch('https://api.cobalt.tools/', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        downloadMode: 'audio',
+        audioFormat: 'mp3'
+      })
+    });
+
+    if (!cobaltRes.ok) {
+      throw new Error('Audio-Stream konnte nicht abgerufen werden.');
+    }
+
+    const cobaltData = await cobaltRes.json();
+    if (!cobaltData || !cobaltData.url) {
+      throw new Error('Kein Audio-Stream von YouTube erhalten.');
+    }
+
+    // Download audio blob
+    console.log('[Client YouTube] Downloading audio blob from:', cobaltData.url);
+    const audioRes = await fetch(cobaltData.url);
+    const audioBlob = await audioRes.blob();
+
+    // Create File object and upload to server
+    const audioFile = new File([audioBlob], `${videoId}.mp3`, { type: 'audio/mpeg' });
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('artist', artist);
+    formData.append('album', 'YouTube Import');
+    formData.append('audio', audioFile);
+
+    const uploadRes = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (uploadRes.ok) {
+      const newSong = await uploadRes.json();
+      songs.unshift(newSong);
+      localStorage.setItem(LOCAL_SONGS_KEY, JSON.stringify(songs));
+      renderTrackList();
+      updateStats();
+      ytUrlInput.value = '';
+      showYtStatus(`✓ "${newSong.title}" erfolgreich gespeichert!`, 'success');
       playSong(0);
     } else {
-      showYtStatus(`Fehler: ${data.error || 'Import fehlgeschlagen'}`, 'error');
+      throw new Error('Upload zum Server fehlgeschlagen.');
     }
+
   } catch (err) {
     console.error('YouTube import error:', err);
-    showYtStatus('Netzwerkfehler beim YouTube Import.', 'error');
+    showYtStatus(`Fehler: ${err.message || 'YouTube Import nicht möglich'}. Versuche eine MP3 Datei hochzuladen.`, 'error');
   } finally {
     ytImportBtn.disabled = false;
     ytImportBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down"></i> Herunterladen & Speichern';
