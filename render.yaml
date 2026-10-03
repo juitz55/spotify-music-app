@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: spotify-music-app
+    runtime: node
+    region: frankfurt
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: npm start
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
