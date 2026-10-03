@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Spotify Music Player (Offline & 24/7)</title>
+  <title>Spotify Music Player</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#1DB954">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,7 +14,6 @@
 <body>
   <div class="app-container">
 
-    <!-- Sidebar Navigation -->
     <aside class="sidebar">
       <div class="brand">
         <i class="fa-brands fa-spotify brand-icon"></i>
@@ -25,9 +24,6 @@
         <button class="nav-item active" id="nav-home">
           <i class="fa-solid fa-house"></i> Startseite
         </button>
-        <button class="nav-item" id="nav-library">
-          <i class="fa-solid fa-lines-leaning"></i> Bibliothek
-        </button>
         <button class="nav-item" id="nav-offline">
           <i class="fa-solid fa-circle-down"></i> Offline Musik <span class="badge" id="offline-count-badge">0</span>
         </button>
@@ -37,111 +33,133 @@
 
       <div class="sidebar-actions">
         <button class="btn btn-primary btn-full" id="open-upload-btn">
-          <i class="fa-solid fa-plus"></i> MP3 Hochladen
+          <i class="fa-solid fa-plus"></i> Song Hochladen
         </button>
       </div>
 
       <div class="network-status-box" id="network-status">
         <div class="status-indicator online" id="status-dot"></div>
-        <span id="status-text">Online (24/7 Backend)</span>
+        <span id="status-text">Online</span>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
     <main class="main-content">
-
-      <!-- Header Topbar -->
       <header class="topbar">
         <div class="search-box">
           <i class="fa-solid fa-magnifying-glass search-icon"></i>
           <input type="text" id="search-input" placeholder="Titel, Künstler oder Album suchen...">
         </div>
-
         <div class="topbar-right">
           <button class="filter-chip" id="filter-offline-only">
-            <i class="fa-solid fa-download"></i> Nur Heruntergeladene
+            <i class="fa-solid fa-download"></i> Nur Offline
           </button>
-          <div class="user-profile">
-            <i class="fa-solid fa-user"></i>
-          </div>
         </div>
       </header>
 
-      <!-- Hero Banner with YouTube Downloader -->
-      <section class="hero-banner">
-        <div class="hero-content">
-          <span class="hero-tag"><i class="fa-brands fa-youtube" style="color: #ff0000;"></i> YOUTUBE LINK AUTOMATISCH SPEICHERN</span>
-          <h1 class="hero-title">Füge einen YouTube-Link ein</h1>
-          <p class="hero-desc">Kopiere einfach den Link eines Videos oder Songs von YouTube (z.B. https://youtu.be/...) – die App lädt das Audio automatisch herunter und speichert es für dich!</p>
+      <!-- Add Music Section -->
+      <section class="add-music-section">
+        <div class="add-music-tabs">
+          <button class="tab-btn active" id="tab-youtube">
+            <i class="fa-brands fa-youtube"></i> YouTube Link
+          </button>
+          <button class="tab-btn" id="tab-upload">
+            <i class="fa-solid fa-file-audio"></i> MP3 Datei
+          </button>
+        </div>
 
-          <!-- YouTube Import Bar -->
+        <!-- YouTube Tab -->
+        <div class="tab-content active" id="content-youtube">
           <div class="youtube-import-box">
             <div class="yt-input-wrapper">
               <i class="fa-brands fa-youtube yt-icon"></i>
-              <input type="text" id="yt-url-input" placeholder="YouTube URL hier einfügen (z.B. https://youtu.be/-J2rSm8K9_Y)">
+              <input type="text" id="yt-url-input" placeholder="https://youtu.be/... oder https://youtube.com/watch?v=...">
             </div>
-            <button class="btn btn-primary" id="yt-import-btn">
-              <i class="fa-solid fa-cloud-arrow-down"></i> Herunterladen & Speichern
+            <button class="btn btn-red" id="yt-import-btn">
+              <i class="fa-solid fa-cloud-arrow-down"></i> Importieren
             </button>
           </div>
           <div id="yt-status-message" class="yt-status"></div>
-
-          <div class="hero-stats">
-            <div class="stat-item">
-              <span class="stat-num" id="stat-total-songs">0</span>
-              <span class="stat-label">Songs Gesamt</span>
+          <div class="yt-info-box" id="yt-info-box" style="display:none;">
+            <img id="yt-thumb" src="" alt="Cover">
+            <div class="yt-info-details">
+              <strong id="yt-title-preview"></strong>
+              <span id="yt-artist-preview"></span>
             </div>
-            <div class="stat-item">
-              <span class="stat-num" id="stat-offline-songs">0</span>
-              <span class="stat-label">Offline Verfügbar</span>
+            <div class="yt-info-actions">
+              <button class="btn btn-primary btn-sm" id="yt-confirm-save">
+                <i class="fa-solid fa-floppy-disk"></i> Speichern
+              </button>
             </div>
           </div>
+        </div>
+
+        <!-- Upload Tab -->
+        <div class="tab-content" id="content-upload">
+          <form id="upload-form-inline">
+            <div class="upload-grid">
+              <div class="form-group">
+                <label>Titel *</label>
+                <input type="text" id="ul-title" placeholder="Song Titel" required>
+              </div>
+              <div class="form-group">
+                <label>Künstler *</label>
+                <input type="text" id="ul-artist" placeholder="Künstler" required>
+              </div>
+              <div class="form-group">
+                <label>Album</label>
+                <input type="text" id="ul-album" placeholder="Album (optional)">
+              </div>
+              <div class="form-group">
+                <label>MP3 Datei *</label>
+                <input type="file" id="ul-audio" accept="audio/*" required>
+              </div>
+              <div class="form-group">
+                <label>Cover Bild</label>
+                <input type="file" id="ul-cover" accept="image/*">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="ul-submit-btn">
+              <i class="fa-solid fa-upload"></i> Hochladen
+            </button>
+          </form>
         </div>
       </section>
 
       <!-- Track List Section -->
       <section class="track-section">
         <div class="section-header">
-          <h2 id="section-title">Meine Musikbibliothek</h2>
+          <h2>Meine Bibliothek</h2>
           <span class="track-count" id="track-count-text">0 Titel</span>
         </div>
-
         <div class="track-list" id="track-list-container">
-          <!-- Dynamically populated tracks -->
-          <div class="loading-state">
-            <i class="fa-solid fa-spinner fa-spin"></i> Lade Musikbibliothek...
-          </div>
+          <div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i> Lade...</div>
         </div>
       </section>
     </main>
 
-    <!-- Floating Bottom Audio Player -->
+    <!-- Player Bar -->
     <footer class="player-bar">
-      
-      <!-- Current Song Info -->
       <div class="player-left">
         <div class="cover-wrapper">
-          <img src="/uploads/covers/default.jpg" id="player-cover" alt="Album Cover">
+          <img src="/uploads/covers/default.jpg" id="player-cover" alt="Cover">
         </div>
         <div class="song-details">
           <span class="song-title" id="player-title">Kein Song ausgewählt</span>
-          <span class="song-artist" id="player-artist">Drücke Play zum Starten</span>
+          <span class="song-artist" id="player-artist">Drücke Play</span>
         </div>
-        <button class="btn-icon" id="player-offline-badge" title="Offline Status">
+        <button class="btn-icon downloaded" id="player-offline-badge" title="Offline Status">
           <i class="fa-regular fa-circle-check"></i>
         </button>
       </div>
 
-      <!-- Controls & Progress Bar -->
       <div class="player-center">
         <div class="player-controls">
-          <button class="btn-control" id="btn-shuffle" title="Zufallswiedergabe"><i class="fa-solid fa-shuffle"></i></button>
-          <button class="btn-control" id="btn-prev" title="Vorheriger Song"><i class="fa-solid fa-backward-step"></i></button>
-          <button class="btn-control btn-play" id="btn-play-pause" title="Abspielen / Pause"><i class="fa-solid fa-play"></i></button>
-          <button class="btn-control" id="btn-next" title="Nächster Song"><i class="fa-solid fa-forward-step"></i></button>
-          <button class="btn-control" id="btn-repeat" title="Wiederholen"><i class="fa-solid fa-repeat"></i></button>
+          <button class="btn-control" id="btn-shuffle"><i class="fa-solid fa-shuffle"></i></button>
+          <button class="btn-control" id="btn-prev"><i class="fa-solid fa-backward-step"></i></button>
+          <button class="btn-control btn-play" id="btn-play-pause"><i class="fa-solid fa-play"></i></button>
+          <button class="btn-control" id="btn-next"><i class="fa-solid fa-forward-step"></i></button>
+          <button class="btn-control" id="btn-repeat"><i class="fa-solid fa-repeat"></i></button>
         </div>
-
         <div class="player-progress">
           <span class="time-text" id="time-current">0:00</span>
           <div class="progress-bar-container" id="seek-bar">
@@ -151,9 +169,8 @@
         </div>
       </div>
 
-      <!-- Volume & Downloads -->
       <div class="player-right">
-        <button class="btn-icon" id="player-download-btn" title="Aktuellen Song herunterladen">
+        <button class="btn-icon" id="player-download-btn" title="Offline speichern">
           <i class="fa-solid fa-arrow-down-to-line"></i>
         </button>
         <div class="volume-container">
@@ -162,51 +179,6 @@
         </div>
       </div>
     </footer>
-
-    <!-- Upload Modal -->
-    <div class="modal-overlay" id="upload-modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3><i class="fa-solid fa-cloud-arrow-up"></i> MP3 Datei hochladen</h3>
-          <button class="close-btn" id="close-upload-modal">&times;</button>
-        </div>
-        
-        <form id="upload-form" class="modal-body">
-          <div class="form-group">
-            <label>Titel</label>
-            <input type="text" id="upload-title" placeholder="z.B. Blinding Lights" required>
-          </div>
-
-          <div class="form-group">
-            <label>Künstler</label>
-            <input type="text" id="upload-artist" placeholder="z.B. The Weeknd" required>
-          </div>
-
-          <div class="form-group">
-            <label>Album (Optional)</label>
-            <input type="text" id="upload-album" placeholder="z.B. After Hours">
-          </div>
-
-          <div class="form-group">
-            <label>Audio Datei (MP3 / WAV / FLAC)</label>
-            <input type="file" id="upload-audio" accept="audio/*" required>
-          </div>
-
-          <div class="form-group">
-            <label>Cover Bild (Optional)</label>
-            <input type="file" id="upload-cover" accept="image/*">
-          </div>
-
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" id="cancel-upload-btn">Abbrechen</button>
-            <button type="submit" class="btn btn-primary" id="submit-upload-btn">
-              <i class="fa-solid fa-upload"></i> Hochladen
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-
   </div>
 
   <audio id="audio-engine" preload="metadata"></audio>
